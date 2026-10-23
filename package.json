@@ -30,19 +30,24 @@
     "prepublishOnly": "npm run build",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run tests/unit",
+    "test:watch": "vitest",
+    "cli": "node dist/cli.js",
+    "test:integration": "vitest run tests/integration"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "dotenv": "^16.5.0",
     "graphql-request": "^7.1.2",
     "zod": "^3.24.4"
   },
   "devDependencies": {
-    "dotenv": "^16.5.0",
     "@types/node": "^22.15.3",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
-    "vitest": "^3.1.2"
+    "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

@@ -83,6 +83,7 @@ export class WCLClient {
     }
 
     let lastError: Error | undefined;
+    let refreshed = false;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -94,13 +95,14 @@ export class WCLClient {
 
         if (error instanceof WCLError) {
           // Token expired -- refresh and retry once
-          if (error.code === 'auth_expired' && attempt === 0) {
+          if (error.code === 'auth_expired' && !refreshed && attempt < MAX_RETRIES) {
             this.token = null;
+            refreshed = true;
             continue;
           }
 
           // Rate limited -- wait and retry
-          if (error.code === 'rate_limited') {
+          if (error.code === 'rate_limited' && attempt < MAX_RETRIES) {
             const waitMs = error.retryAfter
               ? error.retryAfter * 1000
               : DEFAULT_RATE_LIMIT_WAIT_MS;
@@ -110,7 +112,7 @@ export class WCLClient {
           }
 
           // Non-retryable client errors
-          if (error.code === 'auth_failure' || error.code === 'client_error') {
+          if (error.code === 'auth_failure' || error.code === 'client_error' || error.code === 'graphql_error' || error.code === 'missing_configuration') {
             this.onFailure();
             throw error;
           }
@@ -142,6 +144,7 @@ export class WCLClient {
         'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({ query: graphqlQuery, variables }),
+      signal: AbortSignal.timeout(30000),
     });
 
     if (response.status === 401) {
@@ -149,7 +152,8 @@ export class WCLClient {
     }
 
     if (response.status === 429) {
-      const retryAfter = parseInt(response.headers.get('Retry-After') ?? '', 10);
+      const header = response.headers.get('Retry-After') ?? '';
+      const retryAfter = /^\d+$/.test(header) ? Number(header) : Math.max(0, (Date.parse(header)-Date.now())/1000);
       throw new WCLError('rate_limited', 'Rate limited', isNaN(retryAfter) ? undefined : retryAfter);
     }
 
@@ -158,8 +162,7 @@ export class WCLClient {
     }
 
     if (!response.ok) {
-      const body = await response.text();
-      throw new WCLError('client_error', `WCL returned ${response.status}: ${body}`);
+      throw new WCLError('client_error', `WCL returned ${response.status}`);
     }
 
     const json = await response.json() as { data?: T; errors?: Array<{ message: string }> };
@@ -181,6 +184,7 @@ export class WCLClient {
       return this.token.accessToken;
     }
 
+    if (!this.clientId || !this.clientSecret) throw new WCLError('missing_configuration', 'Set WCL_CLIENT_ID and WCL_CLIENT_SECRET in the local .env (see .env). Do not send secrets in chat.');
     logger.info('Fetching new WCL access token');
 
     const response = await fetch(WCL_TOKEN_ENDPOINT, {
@@ -191,11 +195,13 @@ export class WCLClient {
         client_id: this.clientId,
         client_secret: this.clientSecret,
       }),
+      signal: AbortSignal.timeout(30000),
     });
 
     if (!response.ok) {
-      const body = await response.text();
-      throw new WCLError('auth_failure', `Failed to get WCL token: ${response.status} ${body}`);
+      if (response.status >= 500) throw new WCLError('server_error', `Token endpoint returned ${response.status}`);
+      if (response.status === 429) throw new WCLError('rate_limited', 'Token endpoint rate limited', Number(response.headers.get('Retry-After')) || undefined);
+      throw new WCLError('auth_failure', `Failed to get WCL token: ${response.status}`);
     }
 
     const data = await response.json() as { access_token: string; expires_in: number };

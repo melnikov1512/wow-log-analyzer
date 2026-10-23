@@ -119,10 +119,10 @@ query CombatantInfo($code: String!, $fightIDs: [Int]!) {
 `;
 
 export const FIGHT_EVENTS_QUERY = `
-query FightEvents($code: String!, $fightID: Int!, $startTime: Float!, $endTime: Float!, $dataType: EventDataType, $sourceID: Int, $targetID: Int, $abilityID: Float) {
+query FightEvents($code: String!, $fightID: Int!, $startTime: Float!, $endTime: Float!, $dataType: EventDataType, $sourceID: Int, $targetID: Int, $abilityID: Float, $hostilityType: HostilityType) {
   reportData {
     report(code: $code) {
-      events(fightIDs: [$fightID], startTime: $startTime, endTime: $endTime, dataType: $dataType, sourceID: $sourceID, targetID: $targetID, abilityID: $abilityID, limit: 500) {
+      events(fightIDs: [$fightID], startTime: $startTime, endTime: $endTime, dataType: $dataType, sourceID: $sourceID, targetID: $targetID, abilityID: $abilityID, hostilityType: $hostilityType, includeResources: true, useActorIDs: true, useAbilityIDs: true, limit: 10000) {
         data
         nextPageTimestamp
       }

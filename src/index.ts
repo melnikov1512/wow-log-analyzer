@@ -9,6 +9,8 @@ import {
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { fileURLToPath } from 'node:url';
+import { localTool, localAnalysis, responseText } from './local/tools.js';
 import { WCLClient } from './wcl/client.js';
 import { logger } from './utils/logger.js';
 import { getZonesResource } from './resources/zones.js';
@@ -29,24 +31,12 @@ import { getEncounterRankingsSchema, handleGetEncounterRankings } from './tools/
 import { getFightEventsSchema, handleGetFightEvents } from './tools/get-fight-events.js';
 
 // Load .env if available (dev only -- in production, env vars come from MCP client config)
-try { (await import('dotenv')).config(); } catch {}
+try { (await import('dotenv')).config({path:fileURLToPath(new URL('../.env',import.meta.url))}); } catch {}
 
 const WCL_CLIENT_ID = process.env.WCL_CLIENT_ID;
 const WCL_CLIENT_SECRET = process.env.WCL_CLIENT_SECRET;
 
-logger.info('Credential check', {
-  hasClientId: !!WCL_CLIENT_ID,
-  clientIdLength: WCL_CLIENT_ID?.length ?? 0,
-  hasClientSecret: !!WCL_CLIENT_SECRET,
-  clientSecretLength: WCL_CLIENT_SECRET?.length ?? 0,
-});
-
-if (!WCL_CLIENT_ID || !WCL_CLIENT_SECRET) {
-  logger.error('Missing WCL_CLIENT_ID or WCL_CLIENT_SECRET environment variables');
-  process.exit(1);
-}
-
-const wclClient = new WCLClient(WCL_CLIENT_ID, WCL_CLIENT_SECRET);
+const wclClient = new WCLClient(WCL_CLIENT_ID ?? '', WCL_CLIENT_SECRET ?? '');
 
 const SERVER_DESCRIPTION = `WCL MCP Server -- Warcraft Logs performance analysis for World of Warcraft.
 
@@ -115,6 +105,7 @@ const server = new Server(
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
+    localTool,
     {
       name: 'set_active_character',
       description: 'Set the active character for this session. Validates WCL presence and stores character as default for subsequent tool calls.',
@@ -286,6 +277,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object' as const,
         properties: {
+          offset: {type:'integer',minimum:0},
+          limit: {type:'integer',minimum:1,maximum:200},
           report_code: { type: 'string', description: 'WCL report code' },
           fight_id: { type: 'number', description: 'Fight ID' },
           event_type: { type: 'string', enum: ['casts', 'damage-done', 'damage-taken', 'healing', 'buffs', 'debuffs', 'deaths'], description: 'Event type filter' },
@@ -305,6 +298,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   let result: unknown;
 
   switch (name) {
+    case 'local_analysis': {
+      try { result = await localAnalysis(wclClient, args); }
+      catch (e) { result = {error:'local_analysis_failed', message:(e as Error).message}; }
+      break;
+    }
     case 'set_active_character': {
       const parsed = setActiveCharacterSchema.safeParse(args);
       if (!parsed.success) {
@@ -426,10 +424,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       result = { error: 'unknown_tool', message: `Unknown tool: ${name}`, suggestion: 'Check the available tools list.' };
   }
 
-  const isError = typeof result === 'object' && result !== null && 'error' in result;
+  const text = responseText(result);
+  const isError = (typeof result === 'object' && result !== null && 'error' in result) || text.includes('\"error\":\"response_too_large\"');
 
   return {
-    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    content: [{ type: 'text', text }],
     isError,
   };
 });
